@@ -2,6 +2,8 @@
   "name": "eping",
   "version": "0.0.0",
   "description": "ping event emitter",
+  "homepage": "https://github.com/zveroy/node-eping",
+  "bugs": "https://github.com/zveroy/node-eping/issues",
   "main": "lib/eping.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
