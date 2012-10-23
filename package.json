@@ -7,7 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "install": "node-gyp rebuild"
   },
-  "repository": "",
+  "repository": "git://github.com/zveroy/node-eping.git",
   "keywords": [
     "ping",
     "icmp"
