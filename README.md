@@ -3,9 +3,20 @@ Eping
 
 Simple node.js addon to send ICMP echo request and receive responces in EventEmitter style.
 
-Example of usage:
+Install with:
 
-    {Eping} = require './eping'
+    npm install eping
+
+On Arch Linux or other distribution with Python 3 as system default interpreter you may need specify path to python2 executable:
+
+    PYTHON=/usr/bin/python2 npm install eping
+
+Usage
+-----
+
+Simple example (on coffeescript):
+
+    {Eping} = require 'eping'
     
     hosts = []
     for i in [1..255]
