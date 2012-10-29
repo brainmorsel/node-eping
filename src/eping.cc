@@ -2,22 +2,19 @@
 #include <v8.h>
 #include <node.h>
 
-
 #include <uv.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include <stdio.h>
-
+#include <sys/time.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/ip_icmp.h>
-
-// sleep, getpid
 #include <unistd.h>
+#include <inttypes.h>
 
 #include <vector>
 
@@ -39,7 +36,8 @@ namespace {
 #define PACKETSIZE	64
 typedef struct {
 	struct icmphdr hdr;
-	uint8_t payload[PACKETSIZE - sizeof(struct icmphdr)];
+	uint32_t ts;
+	uint8_t payload[PACKETSIZE - sizeof(struct icmphdr) - sizeof(ts)];
 } icmp_packet_t;
 
 typedef union packet_u {
@@ -52,7 +50,8 @@ typedef union packet_u {
 } packet_t;
 
 /* standard 1s complement checksum */
-static uint16_t checksum (void *b, int len)
+static uint16_t
+checksum (void *b, int len)
 {	unsigned short *buf = (unsigned short *) b;
 	unsigned int sum=0;
 	unsigned short result;
@@ -67,13 +66,30 @@ static uint16_t checksum (void *b, int len)
 	return result;
 }
 
-static void dump_packet (icmp_packet_t *icmp) {
-	uint8_t *raw = (uint8_t *) icmp;
+static uint32_t
+get_monotonic_time () {
+	timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
 
-	printf("type: %d code: %d checksum: %d/%d id: %d seq: %d\n",
+	return (ts.tv_sec / 1000 + ts.tv_nsec / 1000000);
+}
+
+static uint32_t
+get_monotonic_time_diff (uint32_t start, uint32_t end) {
+	return end - start;
+}
+
+static void
+dump_packet (icmp_packet_t *icmp) {
+	uint8_t *raw = (uint8_t *) icmp;
+	uint32_t te = get_monotonic_time();
+
+	printf("type: %d code: %d checksum: %d/%d id: %d seq: %d time diff: %d ms\n",
 			icmp->hdr.type, icmp->hdr.code,
 			icmp->hdr.checksum, checksum(icmp, sizeof(*icmp)),
-			icmp->hdr.un.echo.id, icmp->hdr.un.echo.sequence);
+			icmp->hdr.un.echo.id, icmp->hdr.un.echo.sequence,
+			get_monotonic_time_diff(icmp->ts, te)
+			);
 	unsigned int i;
 	for (i = 0; i < sizeof(*icmp); i++) {
 		if (i % 16 == 0) printf("\n");
@@ -82,17 +98,39 @@ static void dump_packet (icmp_packet_t *icmp) {
 	printf("\n------------------------------------\n");
 }
 
-
 typedef struct {
 	struct sockaddr sa;
-	uint8_t icmp_type;
-	uint8_t icmp_code;
 	uint8_t responded;
+	uint8_t is_up;
 } HostItem;
 
 /* *******************************************************************
  * Pinger object
  * *******************************************************************/
+#define MY_UV_CB_DEF(classname, methodname) \
+	static void methodname##_wrapper (uv_handle_t *handle, int status) {\
+		classname *self = (classname *) handle->data;\
+		self->methodname(handle, status);\
+	};\
+	void methodname (uv_handle_t*, int);
+
+#define MY_UV_POLL_CB_DEF(classname, methodname) \
+	static void methodname##_wrapper (uv_poll_t *handle, int status, int events) {\
+		classname *self = (classname *) handle->data;\
+		self->methodname(handle, status, events);\
+	};\
+	void methodname (uv_poll_t*, int, int);
+
+#define MY_UV_TIMER_CB(classname, methodname) \
+	((uv_timer_cb) &classname::methodname##_wrapper)
+
+#define MY_UV_POLL_CB(classname, methodname) \
+	((uv_poll_cb) &classname::methodname##_wrapper)
+
+#define MY_UV_TIMER_INIT(timer) \
+	uv_timer_init(uv_default_loop(), (timer));\
+	(timer)->data = this;
+
 class Eping: public node::ObjectWrap {
   public:
 	static void Init (Handle<Object> target);
@@ -100,15 +138,17 @@ class Eping: public node::ObjectWrap {
   private:
 	uv_timer_t t_timeout;
 	uv_timer_t t_towrite;
+	uv_timer_t t_seq_timer;
 	uv_poll_t poll_socket;
 
 	// options
 	std::vector<HostItem> hosts;
-	int max_packets_to_send;
+	int sequence_size;
 	int packets_send_period;
 	int timeout_time;
+	int sequence_time;
 	// runtime data
-	unsigned int packets_sent_on_cur_iteration;
+	unsigned int cur_host;
 	unsigned int hosts_responded;
 	uint16_t sequence_id;
 	uint16_t packets_id;
@@ -117,13 +157,16 @@ class Eping: public node::ObjectWrap {
 	~Eping();
 	void start ();
 	void stop ();
-	void emit_one (HostItem*);
+	void emit_one (HostItem*, icmp_packet_t*);
 	void emit_all ();
 	void emit_error (const char*);
 	void emit_perror (const char*);
-	static void on_timeout (uv_timer_t*, int);
-	static void on_towrite (uv_timer_t*, int);
-	static void on_socket_ready (uv_poll_t*, int, int);
+	void socket_write_mode (bool);
+
+	MY_UV_POLL_CB_DEF(Eping, on_socket_ready)
+	MY_UV_CB_DEF(Eping, on_timeout)
+	MY_UV_CB_DEF(Eping, on_towrite)
+	MY_UV_CB_DEF(Eping, on_seq_timer)
 
 	// JS public interface:
 	static Handle<Value> Constructor (const Arguments&);
@@ -135,10 +178,10 @@ Eping::Eping (const Arguments& args) {
 	HandleScope scope;
 
 	packets_id = getpid();
-	uv_timer_init(uv_default_loop(), &t_timeout);
-	t_timeout.data = this;
-	uv_timer_init(uv_default_loop(), &t_towrite);
-	t_towrite.data = this;
+
+	MY_UV_TIMER_INIT(&t_timeout)
+	MY_UV_TIMER_INIT(&t_towrite)
+	MY_UV_TIMER_INIT(&t_seq_timer)
 
 	// init options
 	Local<Array> host_arr = Local<Array>::Cast(args[0]);
@@ -160,15 +203,12 @@ Eping::Eping (const Arguments& args) {
 		struct sockaddr *sa = &hosts[idx].sa;
 		sa->sa_family = AF_INET;
 		inet_pton(sa->sa_family, host_ip, &((sockaddr_in *) sa)->sin_addr);
-
-		// mark all targets as timed out by dafault
-		hosts[idx].icmp_type = ICMP_TIME_EXCEEDED;
-		hosts[idx].icmp_code = 255;
 	}
 
-	max_packets_to_send = 3;
+	sequence_size = 3;
 	packets_send_period = 10;
 	timeout_time = 3000;
+	sequence_time = 1000;
 }
 Eping::~Eping () {
 }
@@ -176,7 +216,7 @@ Eping::~Eping () {
 void
 Eping::start () {
 	// reset runtime data
-	packets_sent_on_cur_iteration = 0;
+	cur_host = 0;
 	sequence_id = 0;
 	hosts_responded = 0;
 
@@ -200,7 +240,7 @@ Eping::start () {
 	uv_poll_init(uv_default_loop(), &poll_socket, sd);
 	poll_socket.data = this;
 
-	uv_timer_start(&t_towrite, (uv_timer_cb) on_towrite, 0, packets_send_period);
+	uv_timer_start(&t_towrite, MY_UV_TIMER_CB(Eping, on_towrite), 0, packets_send_period);
 }
 
 void
@@ -213,19 +253,37 @@ Eping::stop () {
 }
 
 void
-Eping::emit_one (HostItem* hi) {
+Eping::emit_one (HostItem* hi, icmp_packet_t* icmp) {
 	HandleScope scope;
 	char addr_str[INET_ADDRSTRLEN];
 	struct sockaddr_in* sa = (struct sockaddr_in*) &hi->sa;
 
 	inet_ntop(AF_INET, &sa->sin_addr, addr_str, INET_ADDRSTRLEN);
+	hi->is_up = icmp->hdr.type == ICMP_ECHOREPLY;
+
+	Local<Object> details = Object::New();
+	details->Set(String::NewSymbol("icmp_type_id"), Integer::New(icmp->hdr.type));
+	details->Set(String::NewSymbol("icmp_code_id"), Integer::New(icmp->hdr.code));
+	details->Set(String::NewSymbol("responce_time"), Integer::New(
+				get_monotonic_time_diff(icmp->ts, get_monotonic_time())));
 
 	Handle<Value> argv[] = {
 		String::New("one"), // event name
 		String::New(addr_str),
-		Boolean::New(hi->icmp_type == 0)
+		Boolean::New(hi->is_up),
+		details
 	};
-	node::MakeCallback(handle_, "emit", 3, argv);
+	node::MakeCallback(handle_, "emit", sizeof(argv)/sizeof(argv[0]), argv);
+
+	if (!hi->responded) {
+		hi->responded = 1;
+		hosts_responded++;
+
+		if (hosts_responded == hosts.size()) {
+			stop();
+			emit_all();
+		}
+	}
 }
 
 void
@@ -236,7 +294,7 @@ Eping::emit_all () {
 	unsigned int idx;
 	for (idx = 0; idx < hosts.size(); idx++) {
 		HostItem *hi = &hosts[idx];
-		result->Set(Integer::New(idx), Boolean::New(hi->icmp_type == ICMP_ECHOREPLY));
+		result->Set(Integer::New(idx), Boolean::New(hi->is_up));
 	}
 
 	Handle<Value> argv[] = {
@@ -266,64 +324,79 @@ Eping::emit_perror (const char* s) {
 }
 
 void
-Eping::on_timeout (uv_timer_t *req, int t) {
-	Eping *self = (Eping *) req->data;
-
-	self->stop();
-	self->emit_all();
+Eping::socket_write_mode (bool isOn) {
+	if (isOn) {
+		uv_poll_start(&poll_socket, UV_READABLE | UV_WRITABLE, MY_UV_POLL_CB(Eping, on_socket_ready));
+	} else {
+		uv_poll_start(&poll_socket, UV_READABLE, MY_UV_POLL_CB(Eping, on_socket_ready));
+	}
 }
 
 void
-Eping::on_towrite (uv_timer_t *req, int t) {
-	Eping *self = (Eping *) req->data;
-
-	// it's time to send next packet, siwtch to r/w mode
-	uv_poll_start(&self->poll_socket, UV_READABLE | UV_WRITABLE, on_socket_ready);
+Eping::on_timeout (uv_handle_t *req, int status) {
+	stop();
+	emit_all();
 }
 
+void
+Eping::on_towrite (uv_handle_t *req, int status) {
+	// it's time to send next packet, switch to r/w mode
+	socket_write_mode(true);
+}
+
+void
+Eping::on_seq_timer (uv_handle_t *req, int status) {
+	socket_write_mode(true);
+	uv_timer_start(&t_towrite, MY_UV_TIMER_CB(Eping, on_towrite), 0, packets_send_period);
+}
 void
 Eping::on_socket_ready (uv_poll_t *req, int status, int events) {
-	Eping *self = (Eping *) req->data;
 	packet_t pckt;
 	icmp_packet_t *i_p;
 
 	if (events & UV_WRITABLE) {
-		struct sockaddr *sa = &self->hosts[self->packets_sent_on_cur_iteration].sa;
-		i_p = &pckt.icmp_req;
-
-		// prepare icmp packet
-		bzero(i_p, sizeof(*i_p));
-		i_p->hdr.type = ICMP_ECHO;
-		i_p->hdr.un.echo.id = self->packets_id;
-		i_p->hdr.un.echo.sequence = self->sequence_id;
-		i_p->hdr.checksum = checksum(i_p, sizeof(*i_p));
-
-#ifdef DEBUG
-		dump_packet(i_p);
-#endif
-		if ( sendto(req->fd, i_p, sizeof(*i_p), 0, sa, sizeof(*sa)) <= 0 ) {
-			self->stop();
-			self->emit_perror("sendto");
-			return;
-		}
-
-		self->packets_sent_on_cur_iteration++;
-
-		if (self->packets_sent_on_cur_iteration == self->hosts.size()) {
-			if (0 == self->sequence_id) {
-				uv_timer_start(&self->t_timeout, (uv_timer_cb) on_timeout, self->timeout_time, 0);
-			}
-			self->sequence_id++;
-			self->packets_sent_on_cur_iteration = 0;
-
-			if (self->sequence_id == self->max_packets_to_send) {
-				// stop send anything
-				uv_timer_stop(&self->t_towrite);
-			}
-		}
-
 		// we need wait a little before send next packet, switch to read-only mode
-		uv_poll_start(&self->poll_socket, UV_READABLE, on_socket_ready);
+		socket_write_mode(false);
+
+		// skip responded hosts
+		while ( hosts[cur_host].responded && cur_host < hosts.size() )
+			cur_host++;
+
+		if (cur_host < hosts.size()) {
+			struct sockaddr *sa = &hosts[cur_host].sa;
+			i_p = &pckt.icmp_req;
+
+			// prepare icmp packet
+			bzero(i_p, sizeof(*i_p));
+			i_p->hdr.type = ICMP_ECHO;
+			i_p->hdr.un.echo.id = packets_id;
+			i_p->hdr.un.echo.sequence = sequence_id;
+			i_p->ts = get_monotonic_time();
+			i_p->hdr.checksum = checksum(i_p, sizeof(*i_p));
+
+			if ( sendto(req->fd, i_p, sizeof(*i_p), 0, sa, sizeof(*sa)) <= 0 ) {
+				stop();
+				emit_perror("sendto");
+				return;
+			}
+
+			cur_host++;
+		}
+		if (cur_host == hosts.size()) {
+			sequence_id++;
+			cur_host = 0;
+
+			// disable write loop
+			uv_timer_stop(&t_towrite);
+
+			if (sequence_id < sequence_size) {
+				// wait before turn on write mode
+				uv_timer_start(&t_seq_timer, MY_UV_TIMER_CB(Eping, on_seq_timer), sequence_time, 0);
+			} else {
+				// no more packets to send, just wait
+				uv_timer_start(&t_timeout, MY_UV_TIMER_CB(Eping, on_timeout), timeout_time, 0);
+			}
+		}
 	}
 	
 	if (events & UV_READABLE) {
@@ -338,27 +411,14 @@ Eping::on_socket_ready (uv_poll_t *req, int status, int events) {
 #ifdef DEBUG
 			dump_packet(i_p);
 #endif
-			if (i_p->hdr.un.echo.id == self->packets_id && i_p->hdr.type != ICMP_ECHO) {
+			if (i_p->hdr.un.echo.id == packets_id && i_p->hdr.type != ICMP_ECHO) {
 				// it's our packets, lets see what within
 				unsigned int idx;
-				for (idx = 0; idx < self->hosts.size(); idx++) {
-					HostItem *hi = &self->hosts[idx];
+				for (idx = 0; idx < hosts.size(); idx++) {
+					HostItem *hi = &hosts[idx];
 					sa2 = (struct sockaddr_in *) &hi->sa;
 					if ( sa1->sin_addr.s_addr == sa2->sin_addr.s_addr ) {
-						if (!hi->responded) {
-							hi->icmp_type = i_p->hdr.type;
-							hi->icmp_code = i_p->hdr.code;
-							hi->responded = 1;
-
-							self->emit_one(hi);
-
-							self->hosts_responded++;
-
-							if (self->hosts_responded == self->hosts.size()) {
-								self->stop();
-								self->emit_all();
-							}
-						}
+						emit_one(hi, i_p);
 					}
 				}
 			}
