@@ -20,9 +20,9 @@
 
 using namespace v8;
 
-//#define DEBUG
-
 namespace {
+
+//#define DEBUG
 
 #ifdef DEBUG
 #define DEBUG_MSG(format, ...) fprintf(stderr, "%s:%d " format "\n", __FILE__, __LINE__, ## __VA_ARGS__)
@@ -32,6 +32,7 @@ namespace {
 #define DEBUG_EXP(format, exp)
 #endif
 
+#define MAX(a, b) (a > b ? a : b)
 
 #define PACKETSIZE	64
 typedef struct {
@@ -79,6 +80,7 @@ get_monotonic_time_diff (uint32_t start, uint32_t end) {
 	return end - start;
 }
 
+#ifdef DEBUG
 static void
 dump_packet (icmp_packet_t *icmp) {
 	uint8_t *raw = (uint8_t *) icmp;
@@ -97,6 +99,7 @@ dump_packet (icmp_packet_t *icmp) {
 	}
 	printf("\n------------------------------------\n");
 }
+#endif // DEBUG
 
 typedef struct {
 	struct sockaddr sa;
@@ -107,12 +110,12 @@ typedef struct {
 /* *******************************************************************
  * Pinger object
  * *******************************************************************/
-#define MY_UV_CB_DEF(classname, methodname) \
-	static void methodname##_wrapper (uv_handle_t *handle, int status) {\
+#define MY_UV_TIMER_CB_DEF(classname, methodname) \
+	static void methodname##_wrapper (uv_timer_t *handle, int status) {\
 		classname *self = (classname *) handle->data;\
 		self->methodname(handle, status);\
 	};\
-	void methodname (uv_handle_t*, int);
+	void methodname (uv_timer_t*, int);
 
 #define MY_UV_POLL_CB_DEF(classname, methodname) \
 	static void methodname##_wrapper (uv_poll_t *handle, int status, int events) {\
@@ -130,6 +133,11 @@ typedef struct {
 #define MY_UV_TIMER_INIT(timer) \
 	uv_timer_init(uv_default_loop(), (timer));\
 	(timer)->data = this;
+
+#define MY_UV_POLL_INIT(handle, fd) \
+	uv_poll_init(uv_default_loop(), (handle), fd);\
+	(handle)->data = this;
+
 
 class Eping: public node::ObjectWrap {
   public:
@@ -164,9 +172,9 @@ class Eping: public node::ObjectWrap {
 	void socket_write_mode (bool);
 
 	MY_UV_POLL_CB_DEF(Eping, on_socket_ready)
-	MY_UV_CB_DEF(Eping, on_timeout)
-	MY_UV_CB_DEF(Eping, on_towrite)
-	MY_UV_CB_DEF(Eping, on_seq_timer)
+	MY_UV_TIMER_CB_DEF(Eping, on_timeout)
+	MY_UV_TIMER_CB_DEF(Eping, on_towrite)
+	MY_UV_TIMER_CB_DEF(Eping, on_seq_timer)
 
 	// JS public interface:
 	static Handle<Value> Constructor (const Arguments&);
@@ -184,9 +192,35 @@ Eping::Eping (const Arguments& args) {
 	MY_UV_TIMER_INIT(&t_seq_timer)
 
 	// init options
-	Local<Array> host_arr = Local<Array>::Cast(args[0]);
-	hosts = std::vector<HostItem>(host_arr->Length());
+	Local<Array> host_arr;
+	// defaults:
+	sequence_size = 1;
+	packets_send_period = 1; // ms
+	timeout_time = 1000;     // ms
+	sequence_time = 1000;    // ms
+	
+	if (args[0]->IsObject()) {
+		Local<Object> obj = Local<Object>::Cast(args[0]);
+		if (obj->Has(String::NewSymbol("hosts"))) {
+			host_arr = Local<Array>::Cast(obj->Get(String::NewSymbol("hosts")));
+		}
+		if 	(obj->Has(String::NewSymbol("timeout"))) {
+			timeout_time = MAX(1, Local<Integer>::Cast(obj->Get(String::NewSymbol("timeout")))->Value());
+		}
+		if 	(obj->Has(String::NewSymbol("wait"))) {
+			sequence_time = MAX(1, Local<Integer>::Cast(obj->Get(String::NewSymbol("wait")))->Value());
+		}
+		if 	(obj->Has(String::NewSymbol("period"))) {
+			packets_send_period = MAX(1, Local<Integer>::Cast(obj->Get(String::NewSymbol("period")))->Value());
+		}
+		if 	(obj->Has(String::NewSymbol("tryouts"))) {
+			sequence_size = MAX(1, Local<Integer>::Cast(obj->Get(String::NewSymbol("tryouts")))->Value());
+		}
+	} else {
+		host_arr = Local<Array>::Cast(args[0]);
+	}
 
+	hosts = std::vector<HostItem>(host_arr->Length());
 	unsigned int idx;
 	for (idx = 0; idx < hosts.size(); idx++) {
 		HandleScope forScope;
@@ -204,11 +238,6 @@ Eping::Eping (const Arguments& args) {
 		sa->sa_family = AF_INET;
 		inet_pton(sa->sa_family, host_ip, &((sockaddr_in *) sa)->sin_addr);
 	}
-
-	sequence_size = 3;
-	packets_send_period = 10;
-	timeout_time = 3000;
-	sequence_time = 1000;
 }
 Eping::~Eping () {
 }
@@ -237,8 +266,7 @@ Eping::start () {
 		return;
 	}
 
-	uv_poll_init(uv_default_loop(), &poll_socket, sd);
-	poll_socket.data = this;
+	MY_UV_POLL_INIT(&poll_socket, sd)
 
 	uv_timer_start(&t_towrite, MY_UV_TIMER_CB(Eping, on_towrite), 0, packets_send_period);
 }
@@ -248,6 +276,7 @@ Eping::stop () {
 	// stop and close everything
 	uv_timer_stop(&t_timeout);
 	uv_timer_stop(&t_towrite);
+	uv_timer_stop(&t_seq_timer);
 	uv_poll_stop(&poll_socket);
 	close(poll_socket.fd);
 }
@@ -333,19 +362,19 @@ Eping::socket_write_mode (bool isOn) {
 }
 
 void
-Eping::on_timeout (uv_handle_t *req, int status) {
+Eping::on_timeout (uv_timer_t *handle, int status) {
 	stop();
 	emit_all();
 }
 
 void
-Eping::on_towrite (uv_handle_t *req, int status) {
+Eping::on_towrite (uv_timer_t *handle, int status) {
 	// it's time to send next packet, switch to r/w mode
 	socket_write_mode(true);
 }
 
 void
-Eping::on_seq_timer (uv_handle_t *req, int status) {
+Eping::on_seq_timer (uv_timer_t *handle, int status) {
 	socket_write_mode(true);
 	uv_timer_start(&t_towrite, MY_UV_TIMER_CB(Eping, on_towrite), 0, packets_send_period);
 }
@@ -435,11 +464,11 @@ Eping::Constructor (const Arguments& args) {
 	HandleScope scope;
 
 	assert(args.IsConstructCall());
-	if (args.Length() < 1) {
+	if (args.Length() != 1) {
 		ThrowException(Exception::TypeError(String::New("Wrong number of arguments")));
 		return scope.Close(Undefined());
 	}
-	if (!args[0]->IsArray()) {
+	if (!(args[0]->IsArray() || args[0]->IsObject())) {
 		ThrowException(Exception::TypeError(String::New("Wrong arguments")));
 		return scope.Close(Undefined());
 	}

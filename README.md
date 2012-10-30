@@ -18,12 +18,8 @@ Simple example (on coffeescript):
 
     {Eping} = require 'eping'
     
-    hosts = []
-    for i in [1..255]
-      hosts.push "172.20.0.#{i}"
-    
-    p = new Eping(hosts)
+    p = new Eping(hosts: ['172.0.0.1', '8.8.8.8', '192.168.166.199'])
       .on('one', (host, isUp) -> console.log 'one:', host, isUp)
-      .on('all', (status) -> console.log 'all:', status)
       .start()
 
+You can find more detailed example in examples/ directory.

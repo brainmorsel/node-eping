@@ -1,0 +1,104 @@
+0 info it worked if it ends with ok
+1 verbose cli [ '/usr/bin/node', '/usr/bin/npm', 'publish' ]
+2 info using npm@1.1.63
+3 info using node@v0.8.12
+4 verbose publish [ '.' ]
+5 verbose read json /home/zy/personel-egg/data/projects/node-projects/noc/eping/package.json
+6 verbose cache add [ '.', null ]
+7 silly cache add name=undefined spec="." args=[".",null]
+8 verbose parsed url { pathname: '.', path: '.', href: '.' }
+9 silly lockFile 3a52ce78- .
+10 verbose lock . /home/zy/.npm/3a52ce78-.lock
+11 verbose read json package.json
+12 verbose tar pack [ '/home/zy/tmp/npm-19263/1351498759292-0.19045326067134738/tmp.tgz',
+12 verbose tar pack   '.' ]
+13 verbose tarball /home/zy/tmp/npm-19263/1351498759292-0.19045326067134738/tmp.tgz
+14 verbose folder .
+15 info prepublish eping@0.0.0
+16 silly lockFile 873e1104-9292-0-19045326067134738-tmp-tgz /home/zy/tmp/npm-19263/1351498759292-0.19045326067134738/tmp.tgz
+17 verbose lock /home/zy/tmp/npm-19263/1351498759292-0.19045326067134738/tmp.tgz /home/zy/.npm/873e1104-9292-0-19045326067134738-tmp-tgz.lock
+18 silly lockFile 873e1104-9292-0-19045326067134738-tmp-tgz /home/zy/tmp/npm-19263/1351498759292-0.19045326067134738/tmp.tgz
+19 verbose tar unpack /home/zy/tmp/npm-19263/1351498759292-0.19045326067134738/tmp.tgz
+20 silly lockFile 4c4850e8-9292-0-19045326067134738-package /home/zy/tmp/npm-19263/1351498759292-0.19045326067134738/package
+21 verbose lock /home/zy/tmp/npm-19263/1351498759292-0.19045326067134738/package /home/zy/.npm/4c4850e8-9292-0-19045326067134738-package.lock
+22 silly gunzTarPerm modes [ '755', '644' ]
+23 silly gunzTarPerm extractEntry package.json
+24 silly gunzTarPerm extractEntry .npmignore
+25 silly gunzTarPerm extractEntry README.md
+26 silly gunzTarPerm extractEntry binding.gyp
+27 silly gunzTarPerm extractEntry examples/simple.coffee
+28 silly gunzTarPerm extractEntry lib/eping.js
+29 silly gunzTarPerm extractEntry src/eping.cc
+30 verbose read json /home/zy/tmp/npm-19263/1351498759292-0.19045326067134738/package/package.json
+31 silly lockFile 4c4850e8-9292-0-19045326067134738-package /home/zy/tmp/npm-19263/1351498759292-0.19045326067134738/package
+32 verbose from cache /home/zy/tmp/npm-19263/1351498759292-0.19045326067134738/package/package.json
+33 verbose tar pack [ '/home/zy/.npm/eping/0.0.0/package.tgz',
+33 verbose tar pack   '/home/zy/tmp/npm-19263/1351498759292-0.19045326067134738/package' ]
+34 verbose tarball /home/zy/.npm/eping/0.0.0/package.tgz
+35 verbose folder /home/zy/tmp/npm-19263/1351498759292-0.19045326067134738/package
+36 silly lockFile b02bda6d-e-zy-npm-eping-0-0-0-package-tgz /home/zy/.npm/eping/0.0.0/package.tgz
+37 verbose lock /home/zy/.npm/eping/0.0.0/package.tgz /home/zy/.npm/b02bda6d-e-zy-npm-eping-0-0-0-package-tgz.lock
+38 silly lockFile b02bda6d-e-zy-npm-eping-0-0-0-package-tgz /home/zy/.npm/eping/0.0.0/package.tgz
+39 silly lockFile 81340a92-home-zy-npm-eping-0-0-0-package /home/zy/.npm/eping/0.0.0/package
+40 verbose lock /home/zy/.npm/eping/0.0.0/package /home/zy/.npm/81340a92-home-zy-npm-eping-0-0-0-package.lock
+41 silly lockFile 81340a92-home-zy-npm-eping-0-0-0-package /home/zy/.npm/eping/0.0.0/package
+42 verbose tar unpack /home/zy/.npm/eping/0.0.0/package.tgz
+43 silly lockFile 81340a92-home-zy-npm-eping-0-0-0-package /home/zy/.npm/eping/0.0.0/package
+44 verbose lock /home/zy/.npm/eping/0.0.0/package /home/zy/.npm/81340a92-home-zy-npm-eping-0-0-0-package.lock
+45 silly gunzTarPerm modes [ '755', '644' ]
+46 silly gunzTarPerm extractEntry package.json
+47 silly gunzTarPerm extractEntry .npmignore
+48 silly gunzTarPerm extractEntry README.md
+49 silly gunzTarPerm extractEntry binding.gyp
+50 silly gunzTarPerm extractEntry examples/simple.coffee
+51 silly gunzTarPerm extractEntry lib/eping.js
+52 silly gunzTarPerm extractEntry src/eping.cc
+53 verbose read json /home/zy/.npm/eping/0.0.0/package/package.json
+54 silly lockFile 81340a92-home-zy-npm-eping-0-0-0-package /home/zy/.npm/eping/0.0.0/package
+55 silly shasum updated bytes 4902
+56 info shasum 4c488b34a4c93d0d0fe0316dd58a58c218ca70ac
+56 info shasum /home/zy/.npm/eping/0.0.0/package.tgz
+57 verbose from cache /home/zy/.npm/eping/0.0.0/package/package.json
+58 verbose chmod /home/zy/.npm/eping/0.0.0/package.tgz 644
+59 verbose chown /home/zy/.npm/eping/0.0.0/package.tgz [ 1000, 1000 ]
+60 silly lockFile 3a52ce78- .
+61 silly publish { name: 'eping',
+61 silly publish   version: '0.0.0',
+61 silly publish   description: 'ping event emitter',
+61 silly publish   homepage: 'https://github.com/zveroy/node-eping',
+61 silly publish   bugs: 'https://github.com/zveroy/node-eping/issues',
+61 silly publish   main: 'lib/eping.js',
+61 silly publish   scripts:
+61 silly publish    { test: 'echo "Error: no test specified" && exit 1',
+61 silly publish      install: 'node-gyp rebuild' },
+61 silly publish   repository: { type: 'git', url: 'git://github.com/zveroy/node-eping.git' },
+61 silly publish   keywords: [ 'ping', 'icmp' ],
+61 silly publish   author: { name: 'Zveroy', email: 'zy@hoax.ws' },
+61 silly publish   license: 'MIT',
+61 silly publish   gypfile: true,
+61 silly publish   readme: 'Eping\n=====\n\nSimple node.js addon to send ICMP echo request and receive responces in EventEmitter style.\n\nInstall with:\n\n    npm install eping\n\nOn Arch Linux or other distribution with Python 3 as system default interpreter you may need specify path to python2 executable:\n\n    PYTHON=/usr/bin/python2 npm install eping\n\nUsage\n-----\n\nSimple example (on coffeescript):\n\n    {Eping} = require \'eping\'\n    \n    hosts = []\n    for i in [1..255]\n      hosts.push "172.20.0.#{i}"\n    \n    p = new Eping(hosts)\n      .on(\'one\', (host, isUp) -> console.log \'one:\', host, isUp)\n      .on(\'all\', (status) -> console.log \'all:\', status)\n      .start()\n\n',
+61 silly publish   _id: 'eping@0.0.0',
+61 silly publish   dist: { shasum: '4c488b34a4c93d0d0fe0316dd58a58c218ca70ac' } }
+62 verbose url raw eping
+63 verbose url resolving [ 'https://registry.npmjs.org/', './eping' ]
+64 verbose url resolved https://registry.npmjs.org/eping
+65 info trying registry request attempt 1 at 17:19:23
+66 http PUT https://registry.npmjs.org/eping
+67 http 409 https://registry.npmjs.org/eping
+68 verbose url raw eping
+69 verbose url resolving [ 'https://registry.npmjs.org/', './eping' ]
+70 verbose url resolved https://registry.npmjs.org/eping
+71 info trying registry request attempt 1 at 17:19:24
+72 http GET https://registry.npmjs.org/eping
+73 http 200 https://registry.npmjs.org/eping
+74 error publish fail Cannot publish over existing version.
+74 error publish fail Bump the 'version' field, set the --force flag, or
+74 error publish fail     npm unpublish 'eping@0.0.0'
+74 error publish fail and try again
+75 error System Linux 3.6.2-1-ARCH
+76 error command "/usr/bin/node" "/usr/bin/npm" "publish"
+77 error cwd /home/zy/personel-egg/data/projects/node-projects/noc/eping
+78 error node -v v0.8.12
+79 error npm -v 1.1.63
+80 error code EPUBLISHCONFLICT
+81 verbose exit [ 1, true ]
