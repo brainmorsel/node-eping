@@ -110,34 +110,42 @@ typedef struct {
 /* *******************************************************************
  * Pinger object
  * *******************************************************************/
-#define MY_UV_TIMER_CB_DEF(classname, methodname) \
+#define EPING_UV_TIMER_CB_DEF(methodname) \
 	static void methodname##_wrapper (uv_timer_t *handle, int status) {\
-		classname *self = (classname *) handle->data;\
+		Eping *self = (Eping *) handle->data;\
 		self->methodname(handle, status);\
 	};\
-	void methodname (uv_timer_t*, int);
+	void methodname (uv_timer_t*, int)
 
-#define MY_UV_POLL_CB_DEF(classname, methodname) \
+#define EPING_UV_POLL_CB_DEF(methodname) \
 	static void methodname##_wrapper (uv_poll_t *handle, int status, int events) {\
-		classname *self = (classname *) handle->data;\
+		Eping *self = (Eping *) handle->data;\
 		self->methodname(handle, status, events);\
 	};\
-	void methodname (uv_poll_t*, int, int);
+	void methodname (uv_poll_t*, int, int)
 
-#define MY_UV_TIMER_CB(classname, methodname) \
-	((uv_timer_cb) &classname::methodname##_wrapper)
+#define EPING_UV_TIMER_CB(methodname) \
+	((uv_timer_cb) &Eping::methodname##_wrapper)
 
-#define MY_UV_POLL_CB(classname, methodname) \
-	((uv_poll_cb) &classname::methodname##_wrapper)
+#define EPING_UV_POLL_CB(methodname) \
+	((uv_poll_cb) &Eping::methodname##_wrapper)
 
-#define MY_UV_TIMER_INIT(timer) \
+#define EPING_UV_TIMER_INIT(timer) \
 	uv_timer_init(uv_default_loop(), (timer));\
 	(timer)->data = this;
 
-#define MY_UV_POLL_INIT(handle, fd) \
+#define EPING_UV_POLL_INIT(handle, fd) \
 	uv_poll_init(uv_default_loop(), (handle), fd);\
 	(handle)->data = this;
 
+#define EPING_JSAPI_METHOD_DEF(methodname) \
+static Handle<Value> methodname##_jsapi_wrapper (const Arguments& args) { \
+	Eping* self = node::ObjectWrap::Unwrap<Eping>(args.This()); \
+	return self->methodname(args); \
+}\
+Handle<Value> methodname (const Arguments&)
+
+#define EPING_JSAPI_METHOD(methodname) methodname##_jsapi_wrapper
 
 class Eping: public node::ObjectWrap {
   public:
@@ -156,53 +164,83 @@ class Eping: public node::ObjectWrap {
 	int timeout_time;
 	int sequence_time;
 	// runtime data
+	bool is_running;
 	unsigned int cur_host;
 	unsigned int hosts_responded;
 	uint16_t sequence_id;
 	uint16_t packets_id;
 
-	Eping(const Arguments&);
-	~Eping();
-	void start ();
-	void stop ();
+	Eping (const Arguments&);
+	~Eping ();
 	void emit_one (HostItem*, icmp_packet_t*);
 	void emit_all ();
 	void emit_error (const char*);
 	void emit_perror (const char*);
 	void socket_write_mode (bool);
+	void _stop ();
 
-	MY_UV_POLL_CB_DEF(Eping, on_socket_ready)
-	MY_UV_TIMER_CB_DEF(Eping, on_timeout)
-	MY_UV_TIMER_CB_DEF(Eping, on_towrite)
-	MY_UV_TIMER_CB_DEF(Eping, on_seq_timer)
+	EPING_UV_POLL_CB_DEF(on_socket_ready);
+	EPING_UV_TIMER_CB_DEF(on_timeout);
+	EPING_UV_TIMER_CB_DEF(on_towrite);
+	EPING_UV_TIMER_CB_DEF(on_seq_timer);
 
 	// JS public interface:
 	static Handle<Value> Constructor (const Arguments&);
-	static Handle<Value> Start (const Arguments&);
-	static Handle<Value> Stop (const Arguments&);
+	EPING_JSAPI_METHOD_DEF(set);
+	EPING_JSAPI_METHOD_DEF(start);
+	EPING_JSAPI_METHOD_DEF(stop);
 };
 
 Eping::Eping (const Arguments& args) {
-	HandleScope scope;
-
 	packets_id = getpid();
 
-	MY_UV_TIMER_INIT(&t_timeout)
-	MY_UV_TIMER_INIT(&t_towrite)
-	MY_UV_TIMER_INIT(&t_seq_timer)
+	EPING_UV_TIMER_INIT(&t_timeout)
+	EPING_UV_TIMER_INIT(&t_towrite)
+	EPING_UV_TIMER_INIT(&t_seq_timer)
 
-	// init options
-	Local<Array> host_arr;
+	is_running = false;
+
 	// defaults:
 	sequence_size = 1;
 	packets_send_period = 1; // ms
 	timeout_time = 1000;     // ms
 	sequence_time = 1000;    // ms
 	
+	set(args);
+}
+Eping::~Eping () {
+}
+
+Handle<Value>
+Eping::set (const Arguments& args) {
+	HandleScope scope;
+	if (is_running) {
+		emit_error("you are not allowed change options while running");
+		return scope.Close(Undefined());
+	}
+
 	if (args[0]->IsObject()) {
 		Local<Object> obj = Local<Object>::Cast(args[0]);
 		if (obj->Has(String::NewSymbol("hosts"))) {
-			host_arr = Local<Array>::Cast(obj->Get(String::NewSymbol("hosts")));
+			Local<Array> host_arr = Local<Array>::Cast(obj->Get(String::NewSymbol("hosts")));
+			hosts = std::vector<HostItem>(host_arr->Length());
+			unsigned int idx;
+			for (idx = 0; idx < hosts.size(); idx++) {
+				HandleScope forScope;
+
+				Local<Value> arr_itm = host_arr->Get(Integer::New(idx));
+				if (!arr_itm->IsString()) {
+					ThrowException(Exception::TypeError(String::New("Array must contain strings")));
+					return scope.Close(Undefined());
+				}
+				// convert to c-string
+				String::Utf8Value str(arr_itm);
+				const char *host_ip = *str;
+
+				struct sockaddr *sa = &hosts[idx].sa;
+				sa->sa_family = AF_INET;
+				inet_pton(sa->sa_family, host_ip, &((sockaddr_in *) sa)->sin_addr);
+			}
 		}
 		if 	(obj->Has(String::NewSymbol("timeout"))) {
 			timeout_time = MAX(1, Local<Integer>::Cast(obj->Get(String::NewSymbol("timeout")))->Value());
@@ -216,34 +254,20 @@ Eping::Eping (const Arguments& args) {
 		if 	(obj->Has(String::NewSymbol("tryouts"))) {
 			sequence_size = MAX(1, Local<Integer>::Cast(obj->Get(String::NewSymbol("tryouts")))->Value());
 		}
-	} else {
-		host_arr = Local<Array>::Cast(args[0]);
 	}
 
-	hosts = std::vector<HostItem>(host_arr->Length());
-	unsigned int idx;
-	for (idx = 0; idx < hosts.size(); idx++) {
-		HandleScope forScope;
+	return scope.Close(args.This());
+}
 
-		Local<Value> arr_itm = host_arr->Get(Integer::New(idx));
-		if (!arr_itm->IsString()) {
-			ThrowException(Exception::TypeError(String::New("Array must contain strings")));
-			return;
-		}
-		// convert to c-string
-		String::Utf8Value str(arr_itm);
-		const char *host_ip = *str;
-
-		struct sockaddr *sa = &hosts[idx].sa;
-		sa->sa_family = AF_INET;
-		inet_pton(sa->sa_family, host_ip, &((sockaddr_in *) sa)->sin_addr);
+Handle<Value>
+Eping::start (const Arguments& args) {
+	HandleScope scope;
+	if (is_running) {
+		emit_error("you are not allowed start twice");
+		return scope.Close(Undefined());
 	}
-}
-Eping::~Eping () {
-}
 
-void
-Eping::start () {
+	is_running = true;
 	// reset runtime data
 	cur_host = 0;
 	sequence_id = 0;
@@ -255,30 +279,43 @@ Eping::start () {
 	if ( sd < 0 )
 	{
 		emit_perror("open raw socket");
-		return;
+		return scope.Close(Undefined());
 	}
 	if ( setsockopt(sd, SOL_IP, IP_TTL, &ttl_val, sizeof(ttl_val)) != 0) {
 		emit_perror("set TTL option");
-		return;
+		return scope.Close(Undefined());
 	}
 	if ( fcntl(sd, F_SETFL, O_NONBLOCK) != 0 ) {
 		emit_perror("sequest nonblocking I/O");
-		return;
+		return scope.Close(Undefined());
 	}
 
-	MY_UV_POLL_INIT(&poll_socket, sd)
+	EPING_UV_POLL_INIT(&poll_socket, sd)
+	uv_timer_start(&t_towrite, EPING_UV_TIMER_CB(on_towrite), 0, packets_send_period);
 
-	uv_timer_start(&t_towrite, MY_UV_TIMER_CB(Eping, on_towrite), 0, packets_send_period);
+	return scope.Close(args.This());
+}
+
+Handle<Value>
+Eping::stop (const Arguments& args) {
+	HandleScope scope;
+	if (is_running) {
+		_stop();
+	}
+
+	return scope.Close(args.This());
 }
 
 void
-Eping::stop () {
+Eping::_stop () {
 	// stop and close everything
 	uv_timer_stop(&t_timeout);
 	uv_timer_stop(&t_towrite);
 	uv_timer_stop(&t_seq_timer);
 	uv_poll_stop(&poll_socket);
 	close(poll_socket.fd);
+
+	is_running = false;
 }
 
 void
@@ -309,7 +346,7 @@ Eping::emit_one (HostItem* hi, icmp_packet_t* icmp) {
 		hosts_responded++;
 
 		if (hosts_responded == hosts.size()) {
-			stop();
+			_stop();
 			emit_all();
 		}
 	}
@@ -317,6 +354,8 @@ Eping::emit_one (HostItem* hi, icmp_packet_t* icmp) {
 
 void
 Eping::emit_all () {
+	assert( !is_running );
+
 	HandleScope scope;
 
 	Local<Array> result = Array::New(hosts.size());
@@ -355,15 +394,15 @@ Eping::emit_perror (const char* s) {
 void
 Eping::socket_write_mode (bool isOn) {
 	if (isOn) {
-		uv_poll_start(&poll_socket, UV_READABLE | UV_WRITABLE, MY_UV_POLL_CB(Eping, on_socket_ready));
+		uv_poll_start(&poll_socket, UV_READABLE | UV_WRITABLE, EPING_UV_POLL_CB(on_socket_ready));
 	} else {
-		uv_poll_start(&poll_socket, UV_READABLE, MY_UV_POLL_CB(Eping, on_socket_ready));
+		uv_poll_start(&poll_socket, UV_READABLE, EPING_UV_POLL_CB(on_socket_ready));
 	}
 }
 
 void
 Eping::on_timeout (uv_timer_t *handle, int status) {
-	stop();
+	_stop();
 	emit_all();
 }
 
@@ -376,7 +415,7 @@ Eping::on_towrite (uv_timer_t *handle, int status) {
 void
 Eping::on_seq_timer (uv_timer_t *handle, int status) {
 	socket_write_mode(true);
-	uv_timer_start(&t_towrite, MY_UV_TIMER_CB(Eping, on_towrite), 0, packets_send_period);
+	uv_timer_start(&t_towrite, EPING_UV_TIMER_CB(on_towrite), 0, packets_send_period);
 }
 void
 Eping::on_socket_ready (uv_poll_t *req, int status, int events) {
@@ -404,7 +443,7 @@ Eping::on_socket_ready (uv_poll_t *req, int status, int events) {
 			i_p->hdr.checksum = checksum(i_p, sizeof(*i_p));
 
 			if ( sendto(req->fd, i_p, sizeof(*i_p), 0, sa, sizeof(*sa)) <= 0 ) {
-				stop();
+				_stop();
 				emit_perror("sendto");
 				return;
 			}
@@ -420,10 +459,10 @@ Eping::on_socket_ready (uv_poll_t *req, int status, int events) {
 
 			if (sequence_id < sequence_size) {
 				// wait before turn on write mode
-				uv_timer_start(&t_seq_timer, MY_UV_TIMER_CB(Eping, on_seq_timer), sequence_time, 0);
+				uv_timer_start(&t_seq_timer, EPING_UV_TIMER_CB(on_seq_timer), sequence_time, 0);
 			} else {
 				// no more packets to send, just wait
-				uv_timer_start(&t_timeout, MY_UV_TIMER_CB(Eping, on_timeout), timeout_time, 0);
+				uv_timer_start(&t_timeout, EPING_UV_TIMER_CB(on_timeout), timeout_time, 0);
 			}
 		}
 	}
@@ -464,27 +503,8 @@ Eping::Constructor (const Arguments& args) {
 	HandleScope scope;
 
 	assert(args.IsConstructCall());
-	if (args.Length() != 1) {
-		ThrowException(Exception::TypeError(String::New("Wrong number of arguments")));
-		return scope.Close(Undefined());
-	}
-	if (!(args[0]->IsArray() || args[0]->IsObject())) {
-		ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-		return scope.Close(Undefined());
-	}
-
 	Eping* self = new Eping(args);
 	self->Wrap(args.This());
-
-	return scope.Close(args.This());
-}
-
-Handle<Value>
-Eping::Start (const Arguments& args) {
-	HandleScope scope;
-	Eping* self = node::ObjectWrap::Unwrap<Eping>(args.This());
-
-	self->start();
 
 	return scope.Close(args.This());
 }
@@ -496,11 +516,12 @@ Eping::Init (Handle<Object> target) {
 	Local<FunctionTemplate> t = FunctionTemplate::New(Eping::Constructor);
 	t->InstanceTemplate()->SetInternalFieldCount(1);
 	t->SetClassName(String::New("Eping"));
-	NODE_SET_PROTOTYPE_METHOD(t, "start", Eping::Start);
+	NODE_SET_PROTOTYPE_METHOD(t, "set", EPING_JSAPI_METHOD(set));
+	NODE_SET_PROTOTYPE_METHOD(t, "start", EPING_JSAPI_METHOD(start));
+	NODE_SET_PROTOTYPE_METHOD(t, "stop", EPING_JSAPI_METHOD(stop));
 
 	target->Set(String::NewSymbol("Eping"), t->GetFunction());
 }
-
 
 extern "C" void init (Handle<Object> target) {
 	Eping::Init(target);

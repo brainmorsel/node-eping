@@ -10,13 +10,14 @@ count = (status) ->
   return up: up, down: down
 
 options =
-  hosts: hosts  # list of hosts to check
+  hosts: []     # list of hosts to check
   tryouts: 3    # number of attempts for each host
   wait: 1000    # time to wait between attempts (ms)
   period: 5     # how often send ICMP packets (ms)
   timout: 1000  # time to wait after last ICMP request (ms)
 
 p = new Eping(options)
+  .set(hosts: hosts, wait: 500)
   .on('one', (host, isUp, details) -> console.log 'one:', host, isUp, details)
   .on('all', (status) -> console.log 'all:', count(status))
   .start()
