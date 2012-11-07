@@ -211,8 +211,8 @@ Eping::Eping (const Arguments& args) {
 Eping::~Eping () {
 }
 
-Handle<Value>
-Eping::set (const Arguments& args) {
+Handle<Value> Eping::
+set (const Arguments& args) {
 	HandleScope scope;
 	if (is_running) {
 		emit_error("you are not allowed change options while running");
@@ -259,8 +259,8 @@ Eping::set (const Arguments& args) {
 	return scope.Close(args.This());
 }
 
-Handle<Value>
-Eping::start (const Arguments& args) {
+Handle<Value> Eping::
+start (const Arguments& args) {
 	HandleScope scope;
 	if (is_running) {
 		emit_error("you are not allowed start twice");
@@ -296,8 +296,8 @@ Eping::start (const Arguments& args) {
 	return scope.Close(args.This());
 }
 
-Handle<Value>
-Eping::stop (const Arguments& args) {
+Handle<Value> Eping::
+stop (const Arguments& args) {
 	HandleScope scope;
 	if (is_running) {
 		_stop();
@@ -306,8 +306,8 @@ Eping::stop (const Arguments& args) {
 	return scope.Close(args.This());
 }
 
-void
-Eping::_stop () {
+void Eping::
+_stop () {
 	// stop and close everything
 	uv_timer_stop(&t_timeout);
 	uv_timer_stop(&t_towrite);
@@ -318,8 +318,8 @@ Eping::_stop () {
 	is_running = false;
 }
 
-void
-Eping::emit_one (HostItem* hi, icmp_packet_t* icmp) {
+void Eping::
+emit_one (HostItem* hi, icmp_packet_t* icmp) {
 	HandleScope scope;
 	char addr_str[INET_ADDRSTRLEN];
 	struct sockaddr_in* sa = (struct sockaddr_in*) &hi->sa;
@@ -352,8 +352,8 @@ Eping::emit_one (HostItem* hi, icmp_packet_t* icmp) {
 	}
 }
 
-void
-Eping::emit_all () {
+void Eping::
+emit_all () {
 	assert( !is_running );
 
 	HandleScope scope;
@@ -372,8 +372,8 @@ Eping::emit_all () {
 	node::MakeCallback(handle_, "emit", 2, argv);
 }
 
-void
-Eping::emit_error (const char* errstr) {
+void Eping::
+emit_error (const char* errstr) {
 	HandleScope scope;
 
 	Handle<Value> argv[] = {
@@ -383,16 +383,16 @@ Eping::emit_error (const char* errstr) {
 	node::MakeCallback(handle_, "emit", 2, argv);
 }
 
-void
-Eping::emit_perror (const char* s) {
+void Eping::
+emit_perror (const char* s) {
 	char buf[1024];
 
 	snprintf(buf, sizeof(buf), "%s: %s", s, strerror(errno));
 	emit_error(buf);
 }
 
-void
-Eping::socket_write_mode (bool isOn) {
+void Eping::
+socket_write_mode (bool isOn) {
 	if (isOn) {
 		uv_poll_start(&poll_socket, UV_READABLE | UV_WRITABLE, EPING_UV_POLL_CB(on_socket_ready));
 	} else {
@@ -400,25 +400,25 @@ Eping::socket_write_mode (bool isOn) {
 	}
 }
 
-void
-Eping::on_timeout (uv_timer_t *handle, int status) {
+void Eping::
+on_timeout (uv_timer_t *handle, int status) {
 	_stop();
 	emit_all();
 }
 
-void
-Eping::on_towrite (uv_timer_t *handle, int status) {
+void Eping::
+on_towrite (uv_timer_t *handle, int status) {
 	// it's time to send next packet, switch to r/w mode
 	socket_write_mode(true);
 }
 
-void
-Eping::on_seq_timer (uv_timer_t *handle, int status) {
+void Eping::
+on_seq_timer (uv_timer_t *handle, int status) {
 	socket_write_mode(true);
 	uv_timer_start(&t_towrite, EPING_UV_TIMER_CB(on_towrite), 0, packets_send_period);
 }
-void
-Eping::on_socket_ready (uv_poll_t *req, int status, int events) {
+void Eping::
+on_socket_ready (uv_poll_t *req, int status, int events) {
 	packet_t pckt;
 	icmp_packet_t *i_p;
 
@@ -498,8 +498,8 @@ Eping::on_socket_ready (uv_poll_t *req, int status, int events) {
 /* *******************************************************************
  * JS Interface
  * *******************************************************************/
-Handle<Value>
-Eping::Constructor (const Arguments& args) {
+Handle<Value> Eping::
+Constructor (const Arguments& args) {
 	HandleScope scope;
 
 	assert(args.IsConstructCall());
@@ -509,8 +509,9 @@ Eping::Constructor (const Arguments& args) {
 	return scope.Close(args.This());
 }
 
-void
-Eping::Init (Handle<Object> target) {
+#define EPING_OBJ_MAKE_INT_CONST(obj, name) obj->Set(String::NewSymbol(#name), Integer::New(name))
+void Eping::
+Init (Handle<Object> target) {
 	HandleScope scope;
 
 	Local<FunctionTemplate> t = FunctionTemplate::New(Eping::Constructor);
@@ -519,8 +520,48 @@ Eping::Init (Handle<Object> target) {
 	NODE_SET_PROTOTYPE_METHOD(t, "set", EPING_JSAPI_METHOD(set));
 	NODE_SET_PROTOTYPE_METHOD(t, "start", EPING_JSAPI_METHOD(start));
 	NODE_SET_PROTOTYPE_METHOD(t, "stop", EPING_JSAPI_METHOD(stop));
+	
+	Local<Object> fun = t->GetFunction();
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_ECHOREPLY);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_DEST_UNREACH);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_SOURCE_QUENCH);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_REDIRECT);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_ECHO);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_TIME_EXCEEDED);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_PARAMETERPROB);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_TIMESTAMP);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_TIMESTAMPREPLY);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_INFO_REQUEST);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_INFO_REPLY);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_ADDRESS);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_ADDRESSREPLY);
+	/* Codes for UNREACH. */
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_NET_UNREACH);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_HOST_UNREACH);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_PROT_UNREACH);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_PORT_UNREACH);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_FRAG_NEEDED);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_SR_FAILED);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_NET_UNKNOWN);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_HOST_UNKNOWN);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_HOST_ISOLATED);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_NET_ANO);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_HOST_ANO);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_NET_UNR_TOS);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_HOST_UNR_TOS);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_PKT_FILTERED);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_PREC_VIOLATION);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_PREC_CUTOFF);
+	/* Codes for REDIRECT. */
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_REDIR_NET);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_REDIR_HOST);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_REDIR_NETTOS);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_REDIR_HOSTTOS);
+	/* Codes for TIME_EXCEEDED. */
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_EXC_TTL);
+	EPING_OBJ_MAKE_INT_CONST(fun, ICMP_EXC_FRAGTIME);
 
-	target->Set(String::NewSymbol("Eping"), t->GetFunction());
+	target->Set(String::NewSymbol("Eping"), fun);
 }
 
 extern "C" void init (Handle<Object> target) {
